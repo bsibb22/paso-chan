@@ -1,0 +1,90 @@
+/*Costum fonts*/
+@font-face {
+  font-family: 'PixelGameExtruded';
+  src:url("fonts/PIXEL\ GAME\ EXTRUDE.OTF") format("opentype");
+}
+@font-face {
+  font-family: 'PixelGameNorm';
+  src:url("fonts/PIXEL\ GAME.OTF") format("opentype");
+}
+
+.paso-app{
+  background: white;
+  display:flex;
+  flex-direction:column;
+  width:400px;
+  height:550px;
+  border-radius:30px;
+  box-shadow: 0px 0px 50px white;
+  
+}
+
+header {
+  background: #081b4d;
+  background: linear-gradient(to right, #273556, #010c23);
+  color: white;
+  line-height:0.25;
+  font-size: 35px;
+  text-align: center;
+  border-top-left-radius:30px;
+  border-top-right-radius:30px;
+}
+body {
+  background-color:#05064a;
+  font-family: 'PixelGameNorm';
+  color: black;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+  height: 550px;
+  margin: 55px;
+}
+main {
+  width:100%;
+  height: 450px;
+  background-image: url('assets/FixedBackground.png');
+  background-size:cover;
+  background-position: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border-bottom-left-radius:30px;
+  border-bottom-right-radius:30px;
+}
+
+/*
+.backg{
+  width:100%;
+  height: 450px;
+  background-size:cover;
+  background-position: center;
+  border-bottom-left-radius:30px;
+  border-bottom-right-radius:30px;
+}
+
+.room{
+  background-image: url('assets/PixelatedRoom.png');
+}
+
+.avatar{
+  background-image: url('assets/BullPasoChanPixel.png');
+}*/
+
+main p {
+  position: absolute;
+  top: 145px;
+  font-size: 30px;
+  color: white; 
+}
+
+.startButton {
+  position: fixed;
+  top:530px;
+  background-color: #0e2965;
+  color: white;
+  border: solid white;
+  border-width:2px;
+  padding: 5px 10px;
+  border-radius: 10px;
+}
