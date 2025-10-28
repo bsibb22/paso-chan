@@ -1,5 +1,6 @@
 # paso-chan
 CEN3907C Senior Design Project: Paso-Chan
+Hardware selection document (WIP): https://docs.google.com/document/d/1BDaP8xXUTaKsWSGs0UN_m29KRFAre18QROHcax4RM5g/edit?usp=sharing
 
 # Completed Work
 1) Networking proof-of-concept
