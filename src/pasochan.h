@@ -1,15 +1,19 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <iostream>
 #include <vector>
 using namespace std;
 
 class PasoChan
 {
+private:
     vector<string> owners;
     int health;
     int hunger;
     int happiness;
     int stress;
 
+public:
     //constructor
     PasoChan(string name);
 
@@ -17,6 +21,7 @@ class PasoChan
     void remover_owner(string name);
 
     //getters
+    vector<string> get_owners();
     int get_health();
     int get_hunger();
     int get_happiness();

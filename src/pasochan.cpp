@@ -1,6 +1,5 @@
 #include "pasochan.h"
 
-
 PasoChan::PasoChan(string name)
 {
     //first owner
@@ -33,6 +32,12 @@ void PasoChan::add_owner(string name)
 
 void PasoChan::remover_owner(string name)
 {
+    if (owners.size() == 0)
+    {
+        cout << "No owners to remove!" << endl;
+        return;
+    }
+
     for (int i = 0; i < owners.size(); i++)
     {
         if (owners[i] == name)
@@ -41,6 +46,11 @@ void PasoChan::remover_owner(string name)
             cout << "Removed: " << name << " from owner list" << endl;
         }
     }
+}
+
+vector<string> PasoChan::get_owners()
+{
+    return owners;
 }
 
 int PasoChan::get_health()
