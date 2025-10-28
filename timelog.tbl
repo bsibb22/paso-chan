@@ -6,3 +6,5 @@ Jake    10/26/25    11:00   23:00       Got the basic ariuno prototype for mostl
 Domenica 10/26/25   10:00   23:00       Created the rough draft for the desktop app- used figma for the avatar assets as well as to rough draft what it will look like
 Brandon 10/28/25    00:30   02:00       Improved hardware selection, wrote component selection document
 Brandon 10/28/25    02:00   05:00       Started draft schematics
+Brian   10/28/25    11:20   12:00       Worked on PasoChan class and looked into ESP-IDF framework
+Brian   10/28/25    13:00   14:00       Fixed remove_owner bug, added edge case considerations for various functions, started setting up ESP-IDF

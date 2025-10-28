@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
+#include <string>
 #include <vector>
 using namespace std;
 
@@ -18,7 +19,7 @@ public:
     PasoChan(string name);
 
     void add_owner(string name);
-    void remover_owner(string name);
+    void remove_owner(string name);
 
     //getters
     vector<string> get_owners();
