@@ -1,25 +1,19 @@
-/**
- * @file network_api.h
- * @brief ESP32 TCP Client Networking API
+/*
+ * Simple network communication library for Paso-chan
  * 
- * This module provides a simple, thread-safe networking interface for ESP32-WROOM
- * devices. It abstracts WiFi connection management and TCP client operations,
- * making it easy for team members to integrate network communication into their
- * applications without dealing with low-level ESP-IDF networking components.
+ * This library allows easy connection to WiFi and send/receive 
+ * messages to/from the relay server. It handles all the complex networking stuff
+ * automatically, including:
+ * - Connecting to WiFi and reconnecting if the connection drops
+ * - Connecting to a server and maintaining the connection
+ * - Sending messages reliably
+ * - Receiving messages through a simple callback function. Callbacks are functions that run when an event happens
  * 
- * Key Features:
- * - Automatic WiFi connection and reconnection
- * - Non-blocking TCP client operations
- * - Thread-safe message queue for sending/receiving
- * - Built-in error handling and logging
- * - Simple callback-based message reception
- * 
- * Hardware: Freenove ESP32-WROOM Development Board
- * 
- * References:
- * - ESP-IDF WiFi API: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_wifi.html
- * - ESP-IDF TCP/IP Adapter: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_netif.html
- * 
+ * To use this library:
+ * 1. Call network_init() with your WiFi and server details
+ * 2. Call network_start() to connect
+ * 3. Use network_send_message() to send data
+ * 4. Receive data through your callback function
  */
 
 #ifndef NETWORK_API_H
@@ -38,11 +32,9 @@ extern "C" {
  */
 #define NETWORK_MAX_MESSAGE_LEN 512
 
-/**
- * @brief Network connection states
- * 
- * These states represent the current status of the network connection,
- * allowing the application to respond appropriately to connection changes.
+/* 
+ * The possible connection states your device can be in.
+ * Check this to see if you're fully connected and ready to send messages.
  */
 typedef enum {
     NETWORK_STATE_DISCONNECTED = 0,  /**< Not connected to WiFi or server */
@@ -51,71 +43,64 @@ typedef enum {
     NETWORK_STATE_ERROR              /**< Error state requiring reset */
 } network_state_t;
 
-/**
- * @brief Network error codes
+/*
+ * Error codes that functions can return. Use these to check if operations succeeded.
+ * - NETWORK_OK: Everything worked fine
+ * - NETWORK_ERR_WIFI_FAILED: Couldn't connect to WiFi
+ * - NETWORK_ERR_SERVER_FAILED: Couldn't connect to the server
+ * - NETWORK_ERR_SEND_FAILED: Message couldn't be sent
+ * - NETWORK_ERR_QUEUE_FULL: Too many messages waiting to be sent
  */
 typedef enum {
-    NETWORK_OK = 0,                  /**< Operation successful */
-    NETWORK_ERR_NOT_INITIALIZED,     /**< Network module not initialized */
-    NETWORK_ERR_WIFI_FAILED,         /**< WiFi connection failed */
-    NETWORK_ERR_SERVER_FAILED,       /**< Server connection failed */
-    NETWORK_ERR_SEND_FAILED,         /**< Message send failed */
-    NETWORK_ERR_INVALID_PARAM,       /**< Invalid parameter provided */
-    NETWORK_ERR_QUEUE_FULL,          /**< Message queue is full */
-    NETWORK_ERR_TIMEOUT              /**< Operation timed out */
+    NETWORK_OK = 0,                  /* Everything worked */
+    NETWORK_ERR_NOT_INITIALIZED,     /* Call network_init() first */
+    NETWORK_ERR_WIFI_FAILED,         /* WiFi connection failed */
+    NETWORK_ERR_SERVER_FAILED,       /* Server connection failed */
+    NETWORK_ERR_SEND_FAILED,         /* Couldn't send message */
+    NETWORK_ERR_INVALID_PARAM,       /* You provided invalid settings */
+    NETWORK_ERR_QUEUE_FULL,          /* Too many messages queued */
+    NETWORK_ERR_TIMEOUT              /* Operation took too long */
 } network_error_t;
 
-/**
- * @brief Network configuration structure
- * 
- * Contains all necessary parameters for WiFi and server connection.
- * Initialize this structure and pass it to network_init().
+/*
+ * Settings needed to connect to your WiFi network and server.
+ * Fill this out and pass it to network_init() to start using the network.
  */
 typedef struct {
-    const char *wifi_ssid;           /**< WiFi network SSID */
-    const char *wifi_password;       /**< WiFi network password */
-    const char *server_ip;           /**< Server IP address (e.g., "192.168.1.100") */
-    uint16_t server_port;            /**< Server TCP port number */
-    const char *device_name;         /**< Unique device identifier */
-    uint32_t reconnect_interval_ms;  /**< Milliseconds between reconnection attempts */
+    const char *wifi_ssid;           /* Name of your WiFi network */
+    const char *wifi_password;       /* Password for your WiFi network */
+    const char *server_ip;          /* IP address of your server (e.g., "192.168.1.100") */
+    uint16_t server_port;           /* Port number your server is listening on */
+    const char *device_name;        /* Name to identify this device to the server */
+    uint32_t reconnect_interval_ms; /* How often to retry if connection is lost (in ms) */
 } network_config_t;
 
-/**
- * @brief Callback function type for received messages
+/*
+ * This is the type of function you need to write to handle incoming messages.
+ * Your function will be called automatically whenever a message arrives.
  * 
- * This callback is invoked when a message is received from the server.
- * The callback executes in the context of the network task, so keep
- * processing minimal or delegate to another task.
+ * Your function should look like this:
+ * void my_message_handler(const char *message, size_t length, void *user_data) {
+ *     // Handle the message here
+ *     printf("Got message: %s\n", message);
+ * }
  * 
- * @param message Null-terminated received message string
- * @param length Length of the message (excluding null terminator)
- * @param user_data User-provided context pointer (set in network_init)
+ * Important:
+ * - message: The text that was received (ends with \0)
+ * - length: How many characters are in the message
+ * - user_data: Any extra data you provided to network_init()
  * 
- * @note The message buffer is only valid during the callback.
- *       Copy data if needed for later use.
+ * Note: If you need to save the message for later, make a copy of it!
+ * The message buffer will be reused after your function returns.
  */
 typedef void (*network_message_callback_t)(const char *message, 
                                            size_t length, 
                                            void *user_data);
 
-/**
- * @brief Initialize the networking subsystem
- * 
- * This function must be called before any other network API functions.
- * It initializes the WiFi stack, creates internal tasks, and prepares
- * the system for connection.
- * 
- * @param config Pointer to network configuration structure
- * @param callback Message reception callback function (can be NULL)
- * @param user_data User context pointer passed to callback (can be NULL)
- * 
- * @return NETWORK_OK on success, error code otherwise
- * 
- * @note This function initializes NVS (Non-Volatile Storage) flash,
- *       which is required by the WiFi stack.
- * 
- * Example:
- * @code
+/*
+ * Sets up the network system for the device. Call this first!
+ *
+ * Example use:
  * network_config_t config = {
  *     .wifi_ssid = "MyWiFi",
  *     .wifi_password = "password123",
@@ -124,108 +109,107 @@ typedef void (*network_message_callback_t)(const char *message,
  *     .device_name = "ESP32_Device1",
  *     .reconnect_interval_ms = 5000
  * };
- * network_init(&config, my_message_handler, NULL);
- * @endcode
+ * 
+ * void handle_message(const char *msg, size_t len, void *data) {
+ *     printf("Got message: %s\n", msg);
+ * }
+ * 
+ * network_init(&config, handle_message, NULL);
+ * 
+ * Returns NETWORK_OK if setup was successful, or an error code if something went wrong.
  */
 network_error_t network_init(const network_config_t *config,
                             network_message_callback_t callback,
                             void *user_data);
 
-/**
- * @brief Start network connection
+/*
+ * Start the network connection. Call this after network_init().
+ * The function returns right away and connection happens in the background.
+ * Use network_get_state() to check when you're fully connected.
  * 
- * Initiates WiFi connection and subsequent server connection.
- * This function is non-blocking; connection status can be monitored
- * via network_get_state() or the status will be logged.
- * 
- * @return NETWORK_OK on success, error code otherwise
- * 
- * @note Automatic reconnection is handled internally if connection drops.
+ * If the connection drops, it will automatically try to reconnect.
+ * Returns NETWORK_OK if started successfully.
  */
 network_error_t network_start(void);
 
-/**
- * @brief Stop network connection
- * 
- * Gracefully disconnects from server and WiFi.
- * 
- * @return NETWORK_OK on success, error code otherwise
+/*
+ * Disconnect from the network cleanly. 
+ * Use this when you're done or need to restart the connection.
+ * Returns NETWORK_OK when successfully disconnected.
  */
 network_error_t network_stop(void);
 
-/**
- * @brief Send a message to the server
- * 
- * Queues a message for transmission to the server. The message is sent
- * asynchronously by the network task. A newline character is automatically
- * appended if not present.
- * 
- * @param message Null-terminated message string
- * 
- * @return NETWORK_OK if queued successfully, error code otherwise
- * 
- * @note Maximum message length is NETWORK_MAX_MESSAGE_LEN bytes.
- * @note Function returns immediately; message is sent asynchronously.
+/*
+ * Send a text message to the server. Message will be delivered reliably
+ * and a newline is automatically added. Returns immediately after queuing
+ * the message (doesn't wait for it to be sent).
  * 
  * Example:
- * @code
- * network_send_message("Button pressed!");
- * @endcode
+ *   network_send_message("Button pressed!");
+ * 
+ * Note: Maximum message length is NETWORK_MAX_MESSAGE_LEN characters.
+ * Returns NETWORK_OK if the message was queued successfully.
  */
 network_error_t network_send_message(const char *message);
 
-/**
- * @brief Get current network connection state
- * 
- * @return Current network_state_t value
+/*
+ * Check if connected and ready to send messages.
  * 
  * Example:
- * @code
  * if (network_get_state() == NETWORK_STATE_SERVER_CONNECTED) {
- *     network_send_message("Hello Server!");
+ *     // We're connected! Safe to send messages
+ *     network_send_message("Hello!");
+ * } else {
+ *     // Not ready yet, wait for connection
  * }
- * @endcode
  */
 network_state_t network_get_state(void);
 
-/**
- * @brief Get the current WiFi RSSI (signal strength)
+/*
+ * Check the WiFi signal strength.
+ * Writes the signal strength to the rssi pointer provided.
  * 
- * @param rssi Pointer to store RSSI value in dBm
+ * The number will be between -30 (perfect signal) and -90 (very weak).
+ * Anything better than -70 is usually good enough.
  * 
- * @return NETWORK_OK on success, error code otherwise
- * 
- * @note RSSI values typically range from -30 (excellent) to -90 (poor) dBm
+ * Example:
+ * int8_t signal_strength;
+ * if (network_get_rssi(&signal_strength) == NETWORK_OK) {
+ *     printf("WiFi signal strength: %d\n", signal_strength);
+ * }
  */
 network_error_t network_get_rssi(int8_t *rssi);
 
-/**
- * @brief Get network statistics
- * 
- * Provides transmission statistics for monitoring and debugging.
+/*
+ * Statistics about network activity - useful for debugging.
+ * These counters track how many messages have been sent/received
+ * and if there were any problems.
  */
 typedef struct {
-    uint32_t messages_sent;          /**< Total messages successfully sent */
-    uint32_t messages_received;      /**< Total messages received */
-    uint32_t send_errors;            /**< Number of send failures */
-    uint32_t reconnect_count;        /**< Number of reconnection attempts */
+    uint32_t messages_sent;      /* How many messages sent successfully */
+    uint32_t messages_received;  /* How many messages  received */
+    uint32_t send_errors;        /* Number of failed send attempts */
+    uint32_t reconnect_count;    /* How many times had to reconnect */
 } network_stats_t;
 
-/**
- * @brief Get network statistics
+/*
+ * Get statistics about network activity.
+ * Pass in a network_stats_t variable and it will be filled with the current counts.
  * 
- * @param stats Pointer to structure to fill with statistics
- * 
- * @return NETWORK_OK on success, error code otherwise
+ * Example:
+ * network_stats_t stats;
+ * if (network_get_stats(&stats) == NETWORK_OK) {
+ *     printf("Sent %d messages, received %d\n", 
+ *            stats.messages_sent, stats.messages_received);
+ * }
  */
 network_error_t network_get_stats(network_stats_t *stats);
 
-/**
- * @brief Deinitialize the networking subsystem
- * 
- * Cleans up all network resources. Call this before application shutdown.
- * 
- * @return NETWORK_OK on success, error code otherwise
+/*
+ * Clean up the network system.
+ * Call this when your program is shutting down to release all resources.
+ * After calling this, you'll need to call network_init() again if you
+ * want to use the network.
  */
 network_error_t network_deinit(void);
 
