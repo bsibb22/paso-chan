@@ -153,7 +153,7 @@ idf.py build
 ## Quick Commands Reference
 
 ```bash
-# Set up environment (every terminal session)
+# Set up environment
 . ~/esp/esp-idf/export.sh
 
 # Build
@@ -167,7 +167,7 @@ idf.py -p /dev/ttyUSB0 monitor
 
 # Exit monitor: Ctrl+]
 ```
-## How It All Works Together
+## How network.c All Works Together
 
 ### **Startup Sequence:**
 
@@ -198,6 +198,6 @@ idf.py -p /dev/ttyUSB0 monitor
 │   Display    │ <── Show received message
 │   on OLED    │
 └──────────────┘
-
+```
 # Known Bugs
 > Relay server is not properly port-forwarded, meaning both users must be connected to the same Wi-Fi network
