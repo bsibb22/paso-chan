@@ -1,20 +1,15 @@
-/**
- * @file network_api.c
- * @brief Implementation of ESP32 TCP Client Networking API
- * 
- * This implementation uses ESP-IDF's native WiFi and TCP/IP stack for robust
- * network communication. It manages connection state, handles reconnection
- * automatically, and provides thread-safe operations using FreeRTOS primitives.
- * 
- * Architecture:
- * - Main network task handles connection management and I/O
- * - FreeRTOS queues for thread-safe message passing
- * - Event groups for WiFi state synchronization
- * 
- * References:
- * - ESP-IDF Programming Guide: https://docs.espressif.com/projects/esp-idf/
- * - FreeRTOS API: https://www.freertos.org/a00106.html
- * 
+/*
+ * This is the core networking implementation for Paso-chan.
+ * It runs a background task that handles all network operations:
+ * - Manages WiFi connection with auto-reconnect
+ * - Maintains TCP connection to the server
+ * - Sends/receives messages using queues to be thread-safe
+ *
+ * The basic architecture:
+ * 1. A main network task runs in the background
+ * 2. Messages to send go through a fifo (tx_queue)
+ * 3. WiFi status is tracked with event bits
+ * 4. Everything is protected with mutexes
  */
 
 #include "network_api.h"
@@ -53,24 +48,23 @@ static const char *TAG = "NETWORK_API";
 /* Maximum number of WiFi connection retry attempts before giving up */
 #define WIFI_MAX_RETRY_COUNT 5
 
-/**
- * @brief Internal message structure for queuing
- * 
- * Used to pass messages between tasks safely using FreeRTOS queues.
+/* 
+ * Message structure used in the tx_queue.
+ * When someone calls network_send_message(), their message goes into
+ * one of these and gets queued for sending by the network task.
  */
 typedef struct {
-    char data[NETWORK_MAX_MESSAGE_LEN];
-    size_t length;
+    char data[NETWORK_MAX_MESSAGE_LEN];  /* The actual message content */
+    size_t length;                       /* Real length of the message */
 } network_message_t;
 
-/**
- * @brief Network module internal context
- * 
- * Contains all state and configuration for the network module.
- * This structure is private to the implementation.
+/*
+ * Main context structure that holds our network state.
+ * Uses a global instance (g_network_ctx) since there's only
+ * one network connection to manage.
  */
 typedef struct {
-    /* Configuration */
+    /* Config */
     network_config_t config;
     network_message_callback_t message_callback;
     void *user_data;
@@ -81,12 +75,12 @@ typedef struct {
     bool running;                   /* Task running flag */
     int wifi_retry_count;
     
-    /* Statistics */
+    /* Stats */
     network_stats_t stats;
     
     /* FreeRTOS primitives */
     TaskHandle_t network_task_handle;
-    QueueHandle_t tx_queue;         /* Transmit message queue */
+    QueueHandle_t tx_queue;         /* Transmit message fifo */
     EventGroupHandle_t wifi_event_group;
     
     /* Synchronization */
@@ -105,14 +99,14 @@ static network_error_t connect_to_server(void);
 static void close_socket(void);
 static void set_state(network_state_t new_state);
 
-/**
- * @brief WiFi event handler
+/*
+ * This function gets called by the ESP32's WiFi system whenever something happens:
+ * - When WiFi starts up (WIFI_EVENT_STA_START)
+ * - If we get disconnected (WIFI_EVENT_STA_DISCONNECTED)
+ * - When we get an IP address (IP_EVENT_STA_GOT_IP)
  * 
- * Handles WiFi events from the ESP-IDF event loop, such as connection
- * established, disconnection, and IP acquisition.
- * 
- * Reference: ESP-IDF Event Loop Library
- * https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/esp_event.html
+ * Use event bits to signal the main code about WiFi status changes,
+ * and retry connections up to WIFI_MAX_RETRY_COUNT times.
  */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
@@ -140,27 +134,29 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-/**
- * @brief Initialize WiFi in station mode
+/*
+ * Sets up the ESP32's WiFi in station (client) mode.
+ * Steps:
+ * 1. Initialize the TCP/IP stack and event system
+ * 2. Setup the WiFi driver with our SSID/password
+ * 3. Register our event handler to know when we connect/disconnect
+ * 4. Start the WiFi and wait for connection
  * 
- * Configures the ESP32 WiFi subsystem for station (client) mode and
- * registers event handlers for connection management.
- * 
- * Reference: ESP32 WiFi Driver
- * https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/wifi.html
+ * Use an event group to wait for either successful connection
+ * or a failure after max retries.
  */
 static network_error_t wifi_init_sta(void)
 {
-    /* Initialize TCP/IP stack */
+    /* Init TCP/IP stack */
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
 
-    /* Initialize WiFi with default configuration */
+    /* Init WiFi with default config */
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Register event handlers for WiFi and IP events */
+    /* Setup event handlers for WiFi and IP events */
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
@@ -174,7 +170,7 @@ static network_error_t wifi_init_sta(void)
                                                         NULL,
                                                         &instance_got_ip));
 
-    /* Configure WiFi credentials */
+    /* Config WiFi credentials */
     wifi_config_t wifi_config = {
         .sta = {
             .threshold.authmode = WIFI_AUTH_WPA2_PSK,
@@ -185,13 +181,13 @@ static network_error_t wifi_init_sta(void)
         },
     };
     
-    /* Copy SSID and password safely */
+    /* Copy SSID and password safely (literally OS p1)*/
     strncpy((char *)wifi_config.sta.ssid, g_network_ctx.config.wifi_ssid, 
             sizeof(wifi_config.sta.ssid) - 1);
     strncpy((char *)wifi_config.sta.password, g_network_ctx.config.wifi_password, 
             sizeof(wifi_config.sta.password) - 1);
 
-    /* Set WiFi mode to station and apply configuration */
+    /* Set WiFi mode to station and apply config */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -215,14 +211,15 @@ static network_error_t wifi_init_sta(void)
     return NETWORK_ERR_WIFI_FAILED;
 }
 
-/**
- * @brief Establish TCP connection to server
+/*
+ * Establishes the TCP connection to our server after WiFi is connected.
+ * Standard socket stuff here:
+ * 1. Create a TCP socket
+ * 2. Convert server IP from string to binary
+ * 3. Connect to server:port
+ * 4. Send our device name so server knows who we are
  * 
- * Creates a TCP socket and connects to the configured server.
- * Uses POSIX socket API as provided by LWIP.
- * 
- * Reference: LWIP Socket API
- * https://www.nongnu.org/lwip/2_0_x/group__socket.html
+ * If anything fails, close the socket and try again later.
  */
 static network_error_t connect_to_server(void)
 {
@@ -269,7 +266,7 @@ static network_error_t connect_to_server(void)
 }
 
 /**
- * @brief Close TCP socket safely
+ * Close TCP socket safely
  */
 static void close_socket(void)
 {
@@ -281,7 +278,7 @@ static void close_socket(void)
 }
 
 /**
- * @brief Set network state with mutex protection
+ * Set network state with mutex protection, take is decrement and give is increment
  */
 static void set_state(network_state_t new_state)
 {
@@ -290,15 +287,17 @@ static void set_state(network_state_t new_state)
     xSemaphoreGive(g_network_ctx.state_mutex);
 }
 
-/**
- * @brief Main network task
+/*
+ * This is the workhorse task that runs in the background handling all network I/O.
+ * Main loop:
+ * 1. If not connected to server, try to connect
+ * 2. Use select() to check for incoming data (with 100ms timeout)
+ * 3. If data arrived, read it and look for complete messages (ended by \n)
+ * 4. Check tx_queue for messages to send
+ * 5. Handle any errors by reconnecting
  * 
- * This FreeRTOS task handles all network I/O operations:
- * - Monitors connection status and reconnects if needed
- * - Sends queued messages from tx_queue
- * - Receives messages from server and invokes callback
- * 
- * The task runs continuously until g_network_ctx.running is set to false.
+ * Uses non-blocking I/O so it can handle both sending and receiving.
+ * If the server disconnects or there's an error, auto-reconnect.
  */
 static void network_task(void *pvParameters)
 {
@@ -330,7 +329,7 @@ static void network_task(void *pvParameters)
         FD_SET(g_network_ctx.sock_fd, &read_fds);
         max_fd = g_network_ctx.sock_fd + 1;
         
-        /* Use short timeout to allow checking tx_queue frequently */
+        /* Short timeout to allow checking the transmit fifo frequently */
         timeout.tv_sec = 0;
         timeout.tv_usec = 100000;  /* 100ms */
         
@@ -408,8 +407,6 @@ static void network_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-/* ========== Public API Implementation ========== */
-
 network_error_t network_init(const network_config_t *config,
                             network_message_callback_t callback,
                             void *user_data)
@@ -419,7 +416,7 @@ network_error_t network_init(const network_config_t *config,
         return NETWORK_ERR_INVALID_PARAM;
     }
     
-    /* Initialize NVS (Non-Volatile Storage) - required for WiFi */
+    /* Initialize NVS (Non-Volatile Storage) which is needed for WiFi */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -467,7 +464,7 @@ network_error_t network_start(void)
         return err;
     }
     
-    /* Create network task */
+    /* Create network task/thread */
     g_network_ctx.running = true;
     BaseType_t ret = xTaskCreate(network_task,
                                  "network_task",
