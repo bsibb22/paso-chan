@@ -35,7 +35,7 @@ echo '. ~/esp/esp-idf/export.sh' >> ~/.bashrc && source ~/.bashrc
 
 ### 2. Hardware Requirements
 - **ESP32 development board** (any variant with ESP32)
-- **SSD1306 OLED Display** (128x64, I2C interface)
+- ** OPTIONAL SSD1306 OLED Display** (128x64, I2C interface)
 - **Wiring**:
   - Display SDA → GPIO 21 (default)
   - Display SCL → GPIO 22 (default)
