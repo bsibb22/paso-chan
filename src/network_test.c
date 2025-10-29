@@ -1,30 +1,14 @@
-/**
- * @file network_test.c
- * @brief Example application using Network API and SSD1306 Display
- * 
- * This example demonstrates a complete networked application with display output.
- * It replicates the functionality of the original Arduino sketch but uses the
- * new C/C++ APIs built on ESP-IDF.
- * 
- * Features demonstrated:
- * - WiFi connection and automatic reconnection
- * - TCP client communication with server
- * - Display status updates on OLED
- * - Button input handling
- * - Message transmission and reception
- * 
- * Hardware Requirements:
- * - Freenove ESP32-WROOM Development Board
- * - Adafruit SSD1306 0.96" OLED Display (128x64)
- * - Button connected to GPIO 0 (boot button on board)
- * 
- * Connections:
- * - OLED SDA -> GPIO 21
- * - OLED SCL -> GPIO 22
- * - OLED VCC -> 3.3V
- * - OLED GND -> GND
- * - Button -> GPIO 0 (with internal pull-up)
- * 
+/*
+ * Test application that demonstrates how to use the network API together
+ * with an SSD1306 display. This is a simple example that shows:
+ * - Bringing up WiFi and the network client
+ * - Sending periodic heartbeats to the server
+ * - Sending a message when the user presses the BOOT button
+ * - Updating an OLED display with connection status and stats
+ *
+ * This is intended to be helpful for understanding the
+ * normal initialization flow and task structure used with the network
+ * module and an RTOS-based application.
  */
 
 #include <stdio.h>
@@ -37,14 +21,13 @@
 #include "network_api.h"
 #include "ssd1306_display.h"
 
-/* ========== Configuration ========== */
 
-/* Network configuration - Update these for your network */
-#define WIFI_SSID           "RTKeeny_2ghz"
+/* Network configuration - hardcoded for right now */
+#define WIFI_SSID           "RTKeeny2ghz"
 #define WIFI_PASSWORD       "Banananutmuffin1120"
 #define SERVER_IP           "192.168.1.106"
 #define SERVER_PORT         8888
-#define DEVICE_NAME         "Device1"
+#define DEVICE_NAME         "Device2"
 
 /* Button configuration */
 #define BUTTON_PIN          GPIO_NUM_0
@@ -53,19 +36,25 @@
 /* Message sending interval */
 #define HEARTBEAT_INTERVAL_MS 15000  /* 15 seconds */
 
-/* ========== Global Variables ========== */
+/* Global vars */
 
 static const char *TAG = "MAIN";
 static uint32_t message_count = 0;
-static bool last_button_state = true;  /* Pull-up makes idle state HIGH */
+static bool last_button_state = true;  /* Pull-up for idle state HIGH */
 
 /* ========== Helper Functions ========== */
 
-/**
- * @brief Update display with current status
- * 
- * Shows device name, network state, signal strength, and statistics
- * on the OLED display in a formatted layout.
+/*
+ * Render current status on the OLED.
+ *
+ * What this does:
+ * - Queries the network module for state, RSSI and stats
+ * - Clears and redraws the display with formatted information
+ *
+ * Notes for readers:
+ * - This function is safe to call from a task context. It performs
+ *   only short blocking operations (display primitives) and is not
+ *   timing-critical.
  */
 static void update_display_status(void)
 {
@@ -121,12 +110,12 @@ static void update_display_status(void)
     display_update();
 }
 
-/**
- * @brief Display a received message
- * 
- * Shows incoming messages on the display.
- * 
- * @param message Message to display
+/*
+ * Show an incoming message on the display for a short time.
+ *
+ * This replaces the normal status view while the message is shown, waits
+ * three seconds, then restores the status screen. The display routines are
+ * simple and blocking, intended for user feedback rather than high-speed IO.
  */
 static void display_message(const char *message)
 {
@@ -147,15 +136,14 @@ static void display_message(const char *message)
     update_display_status();
 }
 
-/**
- * @brief Network message callback
- * 
- * This function is called by the network task when a message is received
- * from the server. It logs the message and updates the display.
- * 
- * @param message Received message string
- * @param length Message length
- * @param user_data User context (not used in this example)
+/*
+ * Callback invoked by the network module whenever a newline-delimited
+ * message arrives from the server.
+ *
+ * Important details:
+ * - This callback runs in the context of the network task. Keep it quick.
+ * - Here we log the message and show it on the display. For heavier work
+ *   (parsing, storing), hand off to another task or queue.
  */
 static void on_message_received(const char *message, size_t length, void *user_data)
 {
@@ -163,13 +151,16 @@ static void on_message_received(const char *message, size_t length, void *user_d
     display_message(message);
 }
 
-/**
- * @brief Button handling task
- * 
- * Monitors button state and sends a message when pressed.
- * Uses debouncing to avoid multiple triggers from a single press.
- * 
- * @param pvParameters Task parameters (unused)
+/*
+ * Task that polls the BOOT button and sends a message on press.
+ *
+ * Implementation notes:
+ * - Uses simple polling with a 10 ms loop and a short debounce delay.
+ * - On a detected falling edge we wait BUTTON_DEBOUNCE_MS and re-check
+ *   to filter bounces.
+ * - The task calls network_send_message() which queues the message.
+ *   network_send_message() is non-blocking; it will return an error if
+ *   the transmit queue is full.
  */
 static void button_task(void *pvParameters)
 {
@@ -212,13 +203,14 @@ static void button_task(void *pvParameters)
     }
 }
 
-/**
- * @brief Heartbeat task
- * 
- * Periodically sends a heartbeat message to keep connection alive and
- * provides a way to monitor device health from the server side.
- * 
- * @param pvParameters Task parameters (unused)
+/*
+ * Periodically send a heartbeat message to the server.
+ *
+ * Notes:
+ * - Sleeps for HEARTBEAT_INTERVAL_MS between attempts.
+ * - Only sends if the network reports that we're connected to the server.
+ * - network_send_message() is used; the function logs a warning if queuing
+ *   the heartbeat fails (queue full or not initialized).
  */
 static void heartbeat_task(void *pvParameters)
 {
@@ -243,12 +235,11 @@ static void heartbeat_task(void *pvParameters)
     }
 }
 
-/**
- * @brief Status update task
- * 
- * Periodically refreshes the display with current status information.
- * 
- * @param pvParameters Task parameters (unused)
+/*
+ * Periodically refresh the OLED with current status.
+ *
+ * This runs every 2s and calls update_display_status().
+ * Keep the work here small so updates don't block other tasks.
  */
 static void status_update_task(void *pvParameters)
 {
@@ -260,23 +251,27 @@ static void status_update_task(void *pvParameters)
     }
 }
 
-/* ========== Main Application ========== */
-
-/**
- * @brief Application entry point
- * 
- * Initializes all subsystems and starts the application tasks.
- * The function demonstrates proper initialization order and error handling.
+/*
+ * Main application.
+ *
+ * Initialization order:
+ * 1. Configure hardware (GPIO, display)
+ * 2. Initialize display so we can show status/errors
+ * 3. Initialize the network module (network_init)
+ * 4. Start the network (network_start) which will attempt WiFi connect
+ * 5. Create application tasks (button, heartbeat, status)
+ *
+ * If initialization fails, update the display and return so the error
+ * is visible. After creating tasks the main function returns. FreeRTOS
+ * keeps the other tasks running.
  */
 void app_main(void)
 {
-    ESP_LOGI(TAG, "=== ESP32 Network + Display Application ===");
+    ESP_LOGI(TAG, "Network Test Starting");
     ESP_LOGI(TAG, "Device: %s", DEVICE_NAME);
     ESP_LOGI(TAG, "Compiled: %s %s", __DATE__, __TIME__);
-    
-    /* ========== Hardware Initialization ========== */
-    
-    /* Configure button GPIO */
+        
+    /* Config button GPIO */
     gpio_config_t button_conf = {
         .pin_bit_mask = (1ULL << BUTTON_PIN),
         .mode = GPIO_MODE_INPUT,
@@ -286,7 +281,7 @@ void app_main(void)
     };
     gpio_config(&button_conf);
     
-    /* Initialize display */
+    /* Init display */
     ESP_LOGI(TAG, "Initializing display...");
     display_config_t display_conf = {
         .sda_pin = DISPLAY_DEFAULT_SDA_PIN,
@@ -297,13 +292,13 @@ void app_main(void)
     
     display_error_t disp_err = display_init(&display_conf);
     if (disp_err != DISPLAY_OK) {
-        ESP_LOGE(TAG, "Display initialization failed: %d", disp_err);
+        ESP_LOGE(TAG, "Display init failed: %d", disp_err);
         return;
     }
     
     /* Show startup screen */
     display_clear();
-    display_print_text(0, 0, "ESP32 Network", TEXT_SIZE_1, COLOR_WHITE);
+    display_print_text(0, 0, "Paso Network", TEXT_SIZE_1, COLOR_WHITE);
     display_print_text(0, 10, "Application", TEXT_SIZE_1, COLOR_WHITE);
     display_draw_line(0, 20, DISPLAY_WIDTH - 1, 20, COLOR_WHITE);
     display_print_text(0, 24, DEVICE_NAME, TEXT_SIZE_2, COLOR_WHITE);
@@ -311,10 +306,8 @@ void app_main(void)
     display_update();
     
     vTaskDelay(pdMS_TO_TICKS(2000));
-    
-    /* ========== Network Initialization ========== */
-    
-    ESP_LOGI(TAG, "Initializing network...");
+        
+    ESP_LOGI(TAG, "Init network...");
     
     network_config_t net_config = {
         .wifi_ssid = WIFI_SSID,
@@ -327,7 +320,7 @@ void app_main(void)
     
     network_error_t net_err = network_init(&net_config, on_message_received, NULL);
     if (net_err != NETWORK_OK) {
-        ESP_LOGE(TAG, "Network initialization failed: %d", net_err);
+        ESP_LOGE(TAG, "Network init failed: %d", net_err);
         display_clear();
         display_print_text(0, 24, "Init Failed!", TEXT_SIZE_2, COLOR_WHITE);
         display_update();
@@ -351,9 +344,7 @@ void app_main(void)
     }
     
     ESP_LOGI(TAG, "Network started successfully");
-    
-    /* ========== Task Creation ========== */
-    
+        
     /* Create button handling task */
     xTaskCreate(button_task, "button_task", 2048, NULL, 5, NULL);
     

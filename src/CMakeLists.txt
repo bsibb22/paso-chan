@@ -20,4 +20,6 @@ idf_component_register(
         esp_netif    # For TCP/IP stack interface
         esp_event    # For event loop
         lwip         # For socket API
+    PRIV_REQUIRES
+        esp_driver_gpio
 )
