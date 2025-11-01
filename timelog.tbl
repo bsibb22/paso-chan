@@ -8,3 +8,4 @@ Brandon 10/28/25    00:30   02:00       Improved hardware selection, wrote compo
 Brandon 10/28/25    02:00   05:00       Started draft schematics
 Brian   10/28/25    11:20   12:00       Worked on PasoChan class and looked into ESP-IDF framework
 Brian   10/28/25    13:00   14:00       Fixed remove_owner bug, added edge case considerations for various functions, started setting up ESP-IDF
+Brandon 11/01/25    01:30               Setting up ESP-IDF SDK
